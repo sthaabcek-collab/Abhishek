@@ -39,6 +39,21 @@ class GrievanceMVPTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             app.create_ticket({"channel": "email", "message": "  "})
 
+    def test_sync_requires_review_and_uses_mock_adapter(self):
+        ticket = app.create_ticket({"channel": "email", "message": "My debit card failed"})
+        with self.assertRaises(ValueError):
+            app.sync_ticket(ticket["ticket_id"])
+        app.review_ticket(ticket["ticket_id"], {
+            "decision": "approve", "reviewer": "test-reviewer", "note": "checked"
+        })
+        result = app.sync_ticket(ticket["ticket_id"])
+        self.assertEqual(result["integration"]["adapter"], "mock")
+        self.assertEqual(result["integration"]["result"], "SIMULATED_ONLY")
+        self.assertTrue(result["integration"]["external_ticket_id"].startswith("MOCK-"))
+        self.assertEqual(len(app.audit_for(ticket["ticket_id"])), 3)
+        with self.assertRaises(ValueError):
+            app.sync_ticket(ticket["ticket_id"])
+
 
 if __name__ == "__main__":
     unittest.main()
