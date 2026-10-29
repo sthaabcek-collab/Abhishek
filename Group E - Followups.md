@@ -223,3 +223,8 @@ Ticket Created
 5. Automate TAT, Reminder & Escalation
 6. AI-Assisted + Human Resolution
 7. Scale, Measure & Optimize Manpower
+
+
+## Implementation Note
+
+Start with a staff-reviewed email pilot. Use approved category, queue, SLA, security, and audit rules before any live integration. Prototype code should use synthetic data and must not be treated as production-ready banking software.
