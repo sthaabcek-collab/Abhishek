@@ -228,3 +228,57 @@ Ticket Created
 ## Implementation Note
 
 Start with a staff-reviewed email pilot. Use approved category, queue, SLA, security, and audit rules before any live integration. Prototype code should use synthetic data and must not be treated as production-ready banking software.
+
+## Practical Implementation Plan
+
+Start with a staff-reviewed email pilot before connecting other channels. The first version should validate required fields, generate a unique ticket ID, suggest a complaint category using approved rules, recommend a branch/unit queue, calculate a due date from approved TAT rules, and save an audit event. Unknown or sensitive cases must go to Customer Care Review. Staff must be able to confirm or correct the category and queue.
+
+### Example decision logic (Python)
+
+```python
+def prepare_ticket(request, category_rules, queue_map, sla_map):
+    if not request.get("message") or not request.get("channel"):
+        raise ValueError("channel and message are required")
+
+    category = suggest_category(request["message"], category_rules)
+    queue = queue_map.get(category, "Customer Care Review")
+    target_hours = sla_map.get(category)  # approved values only
+
+    return {
+        "ticket_id": make_unique_ticket_id(),
+        "channel": request["channel"],
+        "category_suggested": category,
+        "queue_suggested": queue,
+        "target_hours": target_hours,
+        "status": "PENDING_HUMAN_REVIEW",
+        "review_required": True,
+    }
+```
+
+This is illustrative logic: `suggest_category` and `make_unique_ticket_id` still need implementation and tests. Do not invent the Bank's category taxonomy, queue directory, or TAT values.
+
+### Delivery steps
+
+1. Approve complaint categories, queue owners, priority rules, TATs and escalation contacts with Customer Care, Operations and Compliance.
+2. Build an intake adapter for test emails and validate the incoming data.
+3. Add category suggestions, a fallback review queue and a record of why each suggestion was made.
+4. Add staff confirmation, correction, reassignment and audit history.
+5. Add TAT monitoring using approved business calendars and escalation rules.
+6. Ask IT to confirm supported Orbit 360 and ticketing-system APIs before designing integration.
+7. Run in shadow mode first: compare suggestions with staff decisions without changing live ticket routing.
+
+### Requirements before live use
+
+- Bank-approved storage, encryption, authentication, role-based access, backups and retention rules.
+- Duplicate detection, retry handling, failure monitoring and recovery procedures.
+- Tamper-resistant audit records with reviewer identity, timestamp and reason for changes.
+- Human review for uncertain, fraud-related, legal, sensitive and NRB-related complaints.
+- Synthetic or approved de-identified data until Security, Compliance and Data Protection approve live-data use.
+- No automatic grievance closure or unsupervised customer replies in the first pilot.
+
+### Pilot success measures
+
+Agree pass/fail thresholds before testing. Measure staff-verified category and routing accuracy, manual correction rate, time to create a ticket, overdue tickets without an owner, duplicate/failed intake rate, staff time per case, and customer satisfaction where available. Compare results with a baseline before deciding to expand or change staffing.
+
+**Important:** This is a practical design sketch, not production-ready banking software. API contracts, real business-approved SLAs, secure persistence, authentication and internal approvals remain prerequisites.
+
