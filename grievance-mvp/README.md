@@ -120,3 +120,51 @@ Set `TICKETING_ADAPTER=mock` to make the choice explicit. Setting `TICKETING_ADA
 
 ### Before implementing the real connector
 Obtain the vendor/bank-approved API documentation and confirm authentication method, ticket create/update endpoints, field mapping, assignment/queue identifiers, status mapping, rate limits, retry/idempotency support, error handling, audit requirements, network access, and test/sandbox environment. Store credentials in an approved secrets manager, never in source code. Test with synthetic data first and require security and business approval before production use.
+
+## End-to-end case resolution workflow
+
+Each case should have one ticket ID from intake to closure. Use the `/workflow` endpoint to record assignment, progress, root-cause analysis, resolution and follow-up. All actions are added to the audit history.
+
+### Assign an owner
+
+```bash
+curl -X POST http://127.0.0.1:8000/tickets/GRV-XXXXXXXXXX/workflow \
+  -H "Content-Type: application/json" \
+  -d '{"action":"assign","actor":"helpdesk-agent","owner":"Digital Banking Support"}'
+```
+
+### Start work
+
+```bash
+curl -X POST http://127.0.0.1:8000/tickets/GRV-XXXXXXXXXX/workflow \
+  -H "Content-Type: application/json" \
+  -d '{"action":"start","actor":"helpdesk-agent"}'
+```
+
+### Record the root cause and resolution
+
+```bash
+curl -X POST http://127.0.0.1:8000/tickets/GRV-XXXXXXXXXX/workflow \
+  -H "Content-Type: application/json" \
+  -d '{"action":"resolve","actor":"case-owner","root_cause":"Expired authentication session","resolution":"Session reset and customer guided through sign-in"}'
+```
+
+Resolution moves the case to `RESOLVED_PENDING_FOLLOW_UP`; it does not immediately close it.
+
+### Record customer follow-up
+
+```bash
+curl -X POST http://127.0.0.1:8000/tickets/GRV-XXXXXXXXXX/workflow \
+  -H "Content-Type: application/json" \
+  -d '{"action":"follow_up","actor":"helpdesk-agent","follow_up_note":"Called customer and confirmed access restored","customer_outcome":"satisfied"}'
+```
+
+Allowed outcomes are `satisfied`, `not_resolved`, and `no_response`. A satisfied outcome closes the demo case; a not-resolved outcome returns it to `IN_PROGRESS`; no response leaves it in `FOLLOW_UP_PENDING`. Use `{"action":"reopen","actor":"helpdesk-agent"}` if a closed case needs more work.
+
+Other supported actions: `waiting_customer` to record that more information is needed. Every action requires an `actor`, and resolution requires both `root_cause` and `resolution`.
+
+### Simplified operational lifecycle
+
+`Received → Categorized → Assigned → In Progress → Root Cause Identified → Resolution Recorded → Customer Follow-up → Closed / Reopened`
+
+Recommended closure policy for a real deployment: define the follow-up schedule, how many contact attempts are required, what to do when the customer does not respond, who may close or reopen a case, and how to handle urgent or sensitive complaints. These are business decisions and should be approved before production use.
