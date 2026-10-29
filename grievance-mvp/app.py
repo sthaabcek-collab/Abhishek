@@ -69,6 +69,19 @@ def init_db():
           created_at TEXT NOT NULL
         );
         """)
+        # Additive migrations keep existing local demo databases usable.
+        columns = {row["name"] for row in db.execute("PRAGMA table_info(tickets)")}
+        additions = {
+            "owner": "TEXT",
+            "root_cause": "TEXT",
+            "resolution": "TEXT",
+            "last_follow_up_at": "TEXT",
+            "follow_up_note": "TEXT",
+            "customer_outcome": "TEXT",
+        }
+        for name, sql_type in additions.items():
+            if name not in columns:
+                db.execute(f"ALTER TABLE tickets ADD COLUMN {name} {sql_type}")
 
 
 def row_dict(row):
@@ -144,6 +157,72 @@ def review_ticket(ticket_id, payload):
         )
         return row_dict(db.execute(
             "SELECT * FROM tickets WHERE ticket_id = ?", (ticket_id,)
+        ).fetchone())
+
+
+def workflow_action(ticket_id, payload):
+    """Apply one explicit case-management action and write an audit event."""
+    action = str(payload.get("action", "")).strip().lower()
+    actor = str(payload.get("actor", "")).strip()
+    if not actor:
+        raise ValueError("actor is required.")
+    allowed = {"assign", "start", "waiting_customer", "resolve", "follow_up", "reopen"}
+    if action not in allowed:
+        raise ValueError("action must be assign, start, waiting_customer, resolve, follow_up, or reopen.")
+
+    now = utc_now()
+    with connect() as db:
+        row = db.execute("SELECT * FROM tickets WHERE ticket_id=?", (ticket_id,)).fetchone()
+        if not row:
+            return None
+        updates = {}
+        if action == "assign":
+            owner = str(payload.get("owner", "")).strip()
+            if not owner:
+                raise ValueError("owner is required for assignment.")
+            updates.update(owner=owner, status="ASSIGNED")
+        elif action == "start":
+            if not row["owner"]:
+                raise ValueError("Assign an owner before starting work.")
+            updates["status"] = "IN_PROGRESS"
+        elif action == "waiting_customer":
+            updates["status"] = "WAITING_FOR_CUSTOMER"
+        elif action == "resolve":
+            root_cause = str(payload.get("root_cause", "")).strip()
+            resolution = str(payload.get("resolution", "")).strip()
+            if not root_cause or not resolution:
+                raise ValueError("root_cause and resolution are required to resolve a case.")
+            updates.update(root_cause=root_cause, resolution=resolution,
+                           status="RESOLVED_PENDING_FOLLOW_UP")
+        elif action == "follow_up":
+            note = str(payload.get("follow_up_note", "")).strip()
+            outcome = str(payload.get("customer_outcome", "")).strip().lower()
+            if not note or outcome not in ("satisfied", "not_resolved", "no_response"):
+                raise ValueError("follow_up_note and customer_outcome (satisfied, not_resolved, no_response) are required.")
+            updates.update(last_follow_up_at=now, follow_up_note=note,
+                           customer_outcome=outcome)
+            if outcome == "satisfied":
+                updates["status"] = "CLOSED"
+            elif outcome == "not_resolved":
+                updates["status"] = "IN_PROGRESS"
+            else:
+                updates["status"] = "FOLLOW_UP_PENDING"
+        elif action == "reopen":
+            updates["status"] = "IN_PROGRESS"
+            updates["customer_outcome"] = "not_resolved"
+
+        assignments = ", ".join(f"{key}=?" for key in updates)
+        db.execute(f"UPDATE tickets SET {assignments} WHERE ticket_id=?",
+                   (*updates.values(), ticket_id))
+        db.execute(
+            """INSERT INTO audit_events
+               (ticket_id, event, actor, detail, created_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (ticket_id, "WORKFLOW_" + action.upper(), actor,
+             json.dumps(updates), now),
+        )
+        return row_dict(db.execute(
+            "SELECT * FROM tickets WHERE ticket_id=?", (ticket_id,)
         ).fetchone())
 
 
@@ -231,6 +310,12 @@ class Handler(BaseHTTPRequestHandler):
             payload = self.read_json()
             if path == "/tickets":
                 return self.send_json(201, create_ticket(payload))
+            if path.startswith("/tickets/") and path.endswith("/workflow"):
+                ticket_id = path.split("/")[2]
+                ticket = workflow_action(ticket_id, payload)
+                if ticket is None:
+                    return self.send_json(404, {"error": "Ticket not found"})
+                return self.send_json(200, ticket)
             if path.startswith("/tickets/") and path.endswith("/sync"):
                 ticket_id = path.split("/")[2]
                 result = sync_ticket(ticket_id)
