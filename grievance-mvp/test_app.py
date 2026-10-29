@@ -54,6 +54,46 @@ class GrievanceMVPTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             app.sync_ticket(ticket["ticket_id"])
 
+    def test_end_to_end_root_cause_and_follow_up(self):
+        ticket = app.create_ticket({"channel": "email", "message": "Mobile banking login fails"})
+        app.review_ticket(ticket["ticket_id"], {
+            "decision": "approve", "reviewer": "test-reviewer", "note": "checked"
+        })
+        assigned = app.workflow_action(ticket["ticket_id"], {
+            "action": "assign", "actor": "agent", "owner": "Digital Banking Support"
+        })
+        self.assertEqual(assigned["status"], "ASSIGNED")
+        started = app.workflow_action(ticket["ticket_id"], {
+            "action": "start", "actor": "agent"
+        })
+        self.assertEqual(started["status"], "IN_PROGRESS")
+        resolved = app.workflow_action(ticket["ticket_id"], {
+            "action": "resolve", "actor": "case-owner",
+            "root_cause": "Expired session",
+            "resolution": "Reset session and guide customer"
+        })
+        self.assertEqual(resolved["status"], "RESOLVED_PENDING_FOLLOW_UP")
+        closed = app.workflow_action(ticket["ticket_id"], {
+            "action": "follow_up", "actor": "agent",
+            "follow_up_note": "Customer confirmed access restored",
+            "customer_outcome": "satisfied"
+        })
+        self.assertEqual(closed["status"], "CLOSED")
+        self.assertEqual(closed["root_cause"], "Expired session")
+        self.assertEqual(closed["customer_outcome"], "satisfied")
+        self.assertGreaterEqual(len(app.audit_for(ticket["ticket_id"])), 6)
+
+    def test_resolution_requires_root_cause_and_resolution(self):
+        ticket = app.create_ticket({"channel": "email", "message": "Mobile banking login fails"})
+        app.workflow_action(ticket["ticket_id"], {
+            "action": "assign", "actor": "agent", "owner": "Digital Banking Support"
+        })
+        app.workflow_action(ticket["ticket_id"], {"action": "start", "actor": "agent"})
+        with self.assertRaises(ValueError):
+            app.workflow_action(ticket["ticket_id"], {
+                "action": "resolve", "actor": "case-owner", "root_cause": ""
+            })
+
 
 if __name__ == "__main__":
     unittest.main()
