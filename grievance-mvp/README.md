@@ -103,3 +103,20 @@ flowchart TD
 3. **Add operational controls:** authentication, role permissions, background reminders, escalation notifications, and monitoring.
 4. **Integrate safely:** connect approved channels and the existing ticketing system through documented, access-controlled APIs.
 5. **Evaluate before scaling:** track classification accuracy, human correction rate, routing accuracy, acknowledgement time, TAT breaches, reopen rate, and customer satisfaction.
+
+## Integration layer (new)
+
+The API now has a provider-neutral adapter boundary in `integration_layer.py`. By default it uses a **mock adapter** that returns a simulated external ticket ID and makes no network calls.
+
+After a ticket has been human-reviewed, submit it to the mock adapter:
+
+```bash
+curl -X POST http://127.0.0.1:8000/tickets/GRV-XXXXXXXXXX/sync \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+Set `TICKETING_ADAPTER=mock` to make the choice explicit. Setting `TICKETING_ADAPTER=orbit360` intentionally fails closed until an approved Orbit 360 API connector is implemented; it does not make a live connection. The endpoint records a simulated submission in the audit trail and prevents a second submission when one has already been recorded.
+
+### Before implementing the real connector
+Obtain the vendor/bank-approved API documentation and confirm authentication method, ticket create/update endpoints, field mapping, assignment/queue identifiers, status mapping, rate limits, retry/idempotency support, error handling, audit requirements, network access, and test/sandbox environment. Store credentials in an approved secrets manager, never in source code. Test with synthetic data first and require security and business approval before production use.
