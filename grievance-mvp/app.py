@@ -8,6 +8,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+from integration_layer import get_ticketing_adapter
+
 DB_PATH = Path(os.environ.get("GRIEVANCE_DB", "data/grievance.db"))
 HOST = os.environ.get("HOST", "127.0.0.1")
 PORT = int(os.environ.get("PORT", "8000"))
@@ -164,6 +166,37 @@ def audit_for(ticket_id):
         ).fetchall()]
 
 
+def sync_ticket(ticket_id):
+    """Submit an approved ticket through the selected adapter (mock by default)."""
+    with connect() as db:
+        ticket = db.execute(
+            "SELECT * FROM tickets WHERE ticket_id=?", (ticket_id,)
+        ).fetchone()
+        if not ticket:
+            return None
+        if ticket["status"] not in ("READY_FOR_EXISTING_SYSTEM", "REVIEWED_CORRECTED"):
+            raise ValueError("Ticket must be reviewed before it can be submitted.")
+        prior = db.execute(
+            """SELECT detail FROM audit_events
+               WHERE ticket_id=? AND event='INTEGRATION_SUBMISSION' ORDER BY id DESC LIMIT 1""",
+            (ticket_id,),
+        ).fetchone()
+        if prior:
+            raise ValueError("Ticket already has a recorded integration submission; check its result before retrying.")
+        ticket_data = row_dict(ticket)
+    adapter = get_ticketing_adapter()
+    result = adapter.create_ticket(ticket_data)
+    with connect() as db:
+        db.execute(
+            """INSERT INTO audit_events
+               (ticket_id, event, actor, detail, created_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (ticket_id, "INTEGRATION_SUBMISSION", "integration_layer",
+             json.dumps(result), utc_now()),
+        )
+    return {"ticket_id": ticket_id, "integration": result}
+
+
 class Handler(BaseHTTPRequestHandler):
     def send_json(self, status, payload):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -198,6 +231,12 @@ class Handler(BaseHTTPRequestHandler):
             payload = self.read_json()
             if path == "/tickets":
                 return self.send_json(201, create_ticket(payload))
+            if path.startswith("/tickets/") and path.endswith("/sync"):
+                ticket_id = path.split("/")[2]
+                result = sync_ticket(ticket_id)
+                if result is None:
+                    return self.send_json(404, {"error": "Ticket not found"})
+                return self.send_json(200, result)
             if path.startswith("/tickets/") and path.endswith("/review"):
                 ticket_id = path.split("/")[2]
                 ticket = review_ticket(ticket_id, payload)
