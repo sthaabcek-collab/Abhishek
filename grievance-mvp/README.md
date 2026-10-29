@@ -83,3 +83,23 @@ curl http://127.0.0.1:8000/tickets/GRV-XXXXXXXXXX/audit
 - Do not connect this demo to production banking systems or use it to make customer-impacting decisions.
 
 See the parent repository's `Group E - Followups.md` for the broader process and rollout proposal.
+
+## Architecture at a glance
+
+```mermaid
+flowchart TD
+    A[Email or agent-entered complaint] --> B[Ticket API]
+    B --> C[Keyword category and queue suggestion]
+    C --> D[SQLite ticket register]
+    D --> E[Human review and correction]
+    E --> F[Ready for approved existing-system handoff]
+    D --> G[Due-time check / overdue list]
+    D --> H[Audit event history]
+```
+
+## Suggested implementation sequence
+1. **Validate the workflow:** agree categories, queue owners, priority definitions, TAT rules, and escalation policy with business owners.
+2. **Pilot intake:** use synthetic or carefully approved test cases and keep all suggested classifications under human review.
+3. **Add operational controls:** authentication, role permissions, background reminders, escalation notifications, and monitoring.
+4. **Integrate safely:** connect approved channels and the existing ticketing system through documented, access-controlled APIs.
+5. **Evaluate before scaling:** track classification accuracy, human correction rate, routing accuracy, acknowledgement time, TAT breaches, reopen rate, and customer satisfaction.
